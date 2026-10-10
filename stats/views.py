@@ -39,22 +39,45 @@ class PlayViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
+RUN_LOCATIONS = {
+    "inside": ["middle"],
+    "outside": ["left", "right"],
+    "left": ["left"],
+    "middle": ["middle"],
+    "right": ["right"],
+}
+
+
 @api_view(["GET"])
 def team_stats(request):
-    side = request.query_params.get("side", "offense")
+    params = request.query_params
+    side = params.get("side", "offense")
     field = "defense" if side == "defense" else "offense"
 
-    qs = Play.objects.filter(
-        play_type__in=["run", "pass"],
-        epa__isnull=False,
-        game__season_type="REG",
-    )
-    team = request.query_params.get("team")
-    season = request.query_params.get("season")
-    if team:
-        qs = qs.filter(**{f"{field}_id": team.upper()})
-    if season:
-        qs = qs.filter(game__season=int(season))
+    qs = Play.objects.filter(epa__isnull=False, game__season_type="REG")
+
+    play_type = params.get("play_type")
+    if play_type in ("run", "pass"):
+        qs = qs.filter(play_type=play_type)
+    else:
+        qs = qs.filter(play_type__in=["run", "pass"])
+
+    location = params.get("location")
+    if location:
+        if location not in RUN_LOCATIONS:
+            return Response({"error": "location must be inside, outside, left, middle, or right"}, status=400)
+        qs = qs.filter(play_type="run", run_location__in=RUN_LOCATIONS[location])
+
+    try:
+        if params.get("down"):
+            qs = qs.filter(down=int(params["down"]))
+        if params.get("season"):
+            qs = qs.filter(game__season=int(params["season"]))
+    except ValueError:
+        return Response({"error": "down and season must be numbers"}, status=400)
+
+    if params.get("team"):
+        qs = qs.filter(**{f"{field}_id": params["team"].upper()})
 
     rows = (
         qs.values(field, "game__season")
@@ -62,6 +85,7 @@ def team_stats(request):
             plays=Count("id"),
             epa=Avg("epa"),
             success=Avg(Cast("success", IntegerField())),
+            yards=Avg("yards_gained"),
         )
         .order_by("game__season", "-epa")
     )
@@ -73,6 +97,7 @@ def team_stats(request):
             "plays": r["plays"],
             "epa_per_play": round(r["epa"], 3),
             "success_rate": round(r["success"], 3),
+            "avg_yards": round(r["yards"], 2) if r["yards"] is not None else None,
         }
         for r in rows
     ])
