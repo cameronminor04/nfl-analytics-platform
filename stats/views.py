@@ -1,4 +1,9 @@
+from django.db.models import Avg, Count, IntegerField
+from django.db.models.functions import Cast
 from rest_framework import viewsets
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
 from .models import Game, Play, Team
 from .serializers import GameSerializer, PlaySerializer, TeamSerializer
 
@@ -32,3 +37,42 @@ class PlayViewSet(viewsets.ReadOnlyModelViewSet):
             if value:
                 qs = qs.filter(**{field: value})
         return qs
+
+
+@api_view(["GET"])
+def team_stats(request):
+    side = request.query_params.get("side", "offense")
+    field = "defense" if side == "defense" else "offense"
+
+    qs = Play.objects.filter(
+        play_type__in=["run", "pass"],
+        epa__isnull=False,
+        game__season_type="REG",
+    )
+    team = request.query_params.get("team")
+    season = request.query_params.get("season")
+    if team:
+        qs = qs.filter(**{f"{field}_id": team.upper()})
+    if season:
+        qs = qs.filter(game__season=int(season))
+
+    rows = (
+        qs.values(field, "game__season")
+        .annotate(
+            plays=Count("id"),
+            epa=Avg("epa"),
+            success=Avg(Cast("success", IntegerField())),
+        )
+        .order_by("game__season", "-epa")
+    )
+    return Response([
+        {
+            "team": r[field],
+            "season": r["game__season"],
+            "side": field,
+            "plays": r["plays"],
+            "epa_per_play": round(r["epa"], 3),
+            "success_rate": round(r["success"], 3),
+        }
+        for r in rows
+    ])
