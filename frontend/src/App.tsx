@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-
+import EpaChart from "./EpaChart";
 type Team = { abbr: string };
 
 type StatRow = {
@@ -74,6 +74,7 @@ export default function App() {
       </div>
 
       {error && <p>{error}</p>}
+      <EpaChart rows={sorted} side={side} />
 
       <table style={{ width: "100%", textAlign: "left" }}>
         <thead>
